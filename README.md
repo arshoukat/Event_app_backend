@@ -210,4 +210,3 @@ expo build:android
 ## License
 
 ISC
-
