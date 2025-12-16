@@ -13,7 +13,7 @@ const eventRoutes = require('./routes/event.routes');
 const userRoutes = require('./routes/user.routes');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Connect to database
 connectDB();
@@ -31,6 +31,34 @@ app.get('/health', (req, res) => {
     status: 'OK', 
     message: 'Server is running',
     timestamp: new Date().toISOString()
+  });
+});
+
+// API info route
+app.get('/api', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Event App API',
+    version: '1.0.0',
+    endpoints: {
+      auth: {
+        register: 'POST /api/auth/register',
+        login: 'POST /api/auth/login',
+        me: 'GET /api/auth/me (Protected)'
+      },
+      events: {
+        list: 'GET /api/events',
+        get: 'GET /api/events/:id',
+        create: 'POST /api/events (Protected)',
+        update: 'PUT /api/events/:id (Protected)',
+        delete: 'DELETE /api/events/:id (Protected)',
+        register: 'POST /api/events/:id/register (Protected)'
+      },
+      users: {
+        profile: 'GET /api/users/profile (Protected)',
+        updateProfile: 'PUT /api/users/profile (Protected)'
+      }
+    }
   });
 });
 

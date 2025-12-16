@@ -1,66 +1,53 @@
-# Event App - Full Stack Mobile Application
+# Event App - Backend API
 
-A complete mobile application with Node.js backend and React Native mobile app (iOS & Android).
+A Node.js/Express REST API backend for the Event App application.
 
 ## Project Structure
 
 ```
 Event_app_backend/
-├── backend/                 # Node.js Backend API
-│   ├── src/
-│   │   ├── config/         # Configuration files
-│   │   ├── controllers/    # Route controllers
-│   │   ├── middleware/     # Custom middleware
-│   │   ├── models/         # Database models
-│   │   ├── routes/         # API routes
-│   │   └── server.js       # Entry point
-│   ├── .env.example        # Environment variables template
-│   └── package.json        # Backend dependencies
-│
-└── mobile/                  # React Native Mobile App
-    ├── src/
-    │   ├── config/         # API configuration
-    │   ├── context/        # React Context providers
-    │   └── screens/        # App screens
-    ├── App.js              # App entry point
-    ├── app.json            # Expo configuration
-    └── package.json        # Mobile dependencies
+├── src/
+│   ├── config/         # Configuration files
+│   ├── controllers/    # Route controllers
+│   ├── middleware/     # Custom middleware
+│   ├── models/         # Database models
+│   ├── routes/         # API routes
+│   └── server.js       # Entry point
+├── .env                # Environment variables (create this file)
+├── package.json        # Dependencies
+└── README.md
 ```
 
-## Backend Setup
+## Prerequisites
 
-### Prerequisites
 - Node.js (v14 or higher)
 - MongoDB (local or cloud instance)
 - npm or yarn
 
-### Installation
+## Installation
 
-1. Navigate to backend directory:
-```bash
-cd backend
-```
-
-2. Install dependencies:
+1. Install dependencies:
 ```bash
 npm install
 ```
 
-3. Create `.env` file from `.env.example`:
+2. Create `.env` file:
 ```bash
-cp .env.example .env
+touch .env
 ```
 
-4. Update `.env` with your configuration:
+3. Update `.env` with your configuration:
 ```env
 NODE_ENV=development
-PORT=5000
+PORT=5001
 MONGODB_URI=mongodb://localhost:27017/eventapp
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
 CORS_ORIGIN=http://localhost:3000
 ```
 
-5. Start the server:
+**Note:** Port 5001 is used instead of 5000 to avoid conflicts with macOS AirPlay Receiver.
+
+4. Start the server:
 ```bash
 # Development mode (with nodemon)
 npm run dev
@@ -69,16 +56,20 @@ npm run dev
 npm start
 ```
 
-The backend API will be running on `http://localhost:5000`
+The backend API will be running on `http://localhost:5001`
 
-### API Endpoints
+## API Endpoints
 
-#### Authentication
+### Base URL
+- `GET /api` - Get API information and available endpoints
+- `GET /health` - Health check endpoint
+
+### Authentication
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - Login user
 - `GET /api/auth/me` - Get current user (Protected)
 
-#### Events
+### Events
 - `GET /api/events` - Get all events (with optional query params: category, status, search)
 - `GET /api/events/:id` - Get single event
 - `POST /api/events` - Create event (Protected)
@@ -86,67 +77,12 @@ The backend API will be running on `http://localhost:5000`
 - `DELETE /api/events/:id` - Delete event (Protected)
 - `POST /api/events/:id/register` - Register for event (Protected)
 
-#### Users
+### Users
 - `GET /api/users/profile` - Get user profile (Protected)
 - `PUT /api/users/profile` - Update user profile (Protected)
 
-## Mobile App Setup
-
-### Prerequisites
-- Node.js (v14 or higher)
-- Expo CLI: `npm install -g expo-cli`
-- iOS Simulator (for Mac) or Android Studio (for Android)
-
-### Installation
-
-1. Navigate to mobile directory:
-```bash
-cd mobile
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Update API URL in `src/config/api.js`:
-```javascript
-const API_URL = __DEV__ 
-  ? 'http://localhost:5000/api'  // For iOS simulator
-  : 'http://YOUR_IP:5000/api';    // For physical device, use your computer's IP
-```
-
-**Note for Physical Devices:**
-- iOS: Use your Mac's IP address (e.g., `http://192.168.1.100:5000/api`)
-- Android: Use your computer's IP address
-- Make sure your device and computer are on the same network
-
-4. Start the Expo development server:
-```bash
-npm start
-# or
-expo start
-```
-
-5. Run on device:
-   - **iOS**: Press `i` in the terminal or scan QR code with Camera app
-   - **Android**: Press `a` in the terminal or scan QR code with Expo Go app
-
-### Building for Production
-
-#### iOS
-```bash
-expo build:ios
-```
-
-#### Android
-```bash
-expo build:android
-```
-
 ## Features
 
-### Backend
 - ✅ RESTful API with Express.js
 - ✅ MongoDB database with Mongoose
 - ✅ JWT authentication
@@ -156,56 +92,38 @@ expo build:android
 - ✅ Security headers with Helmet
 - ✅ Request logging with Morgan
 
-### Mobile App
-- ✅ React Native with Expo
-- ✅ Navigation (Stack & Tab navigation)
-- ✅ Authentication (Login/Register)
-- ✅ Event listing and search
-- ✅ Event details and registration
-- ✅ User profile
-- ✅ Create events
-- ✅ Context API for state management
-- ✅ AsyncStorage for token persistence
-
 ## Development Workflow
 
-1. **Start Backend**: `cd backend && npm run dev`
-2. **Start Mobile**: `cd mobile && npm start`
-3. **Test on Device**: Use Expo Go app or simulators
+1. **Start Server**: `npm run dev`
+2. **Test API**: Use Postman, curl, or your frontend application
+3. **View Logs**: Check terminal for request logs
 
 ## Environment Variables
 
-### Backend (.env)
+### Required (.env)
 - `NODE_ENV` - Environment (development/production)
-- `PORT` - Server port (default: 5000)
+- `PORT` - Server port (default: 5001, changed from 5000 to avoid macOS AirPlay conflict)
 - `MONGODB_URI` - MongoDB connection string
-- `JWT_SECRET` - Secret key for JWT tokens
+- `JWT_SECRET` - Secret key for JWT tokens (use a strong random string in production)
 - `CORS_ORIGIN` - Allowed CORS origin
-
-## Next Steps
-
-1. Add image upload functionality
-2. Add push notifications
-3. Add event categories filtering
-4. Add user favorites/bookmarks
-5. Add event reviews and ratings
-6. Add social sharing
-7. Add calendar integration
-8. Add payment integration (Stripe, etc.)
 
 ## Troubleshooting
 
-### Mobile app can't connect to backend
-- Make sure backend is running
-- Check API URL in `src/config/api.js`
-- For physical devices, use your computer's IP address instead of `localhost`
-- Ensure both devices are on the same network
-- Check firewall settings
+### Port 5000 already in use
+- macOS AirPlay Receiver uses port 5000 by default
+- The backend is configured to use port 5001 to avoid this conflict
+- If you need to use port 5000, disable AirPlay Receiver in System Settings > General > AirDrop & Handoff
 
 ### MongoDB connection issues
 - Make sure MongoDB is running
+  - macOS: `brew services start mongodb-community@7.0`
+  - Check status: `brew services list | grep mongodb`
 - Check `MONGODB_URI` in `.env` file
 - For cloud MongoDB (Atlas), whitelist your IP address
+
+### Route not found errors
+- Make sure you're using the correct endpoint paths (e.g., `/api/events` not just `/api`)
+- Check the API info: `GET http://localhost:5001/api`
 
 ## License
 
