@@ -20,7 +20,10 @@ connectDB();
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*', // Allow all origins in development, set specific origin in production
+  credentials: true
+}));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -44,7 +47,10 @@ app.get('/api', (req, res) => {
       auth: {
         register: 'POST /api/auth/register',
         login: 'POST /api/auth/login',
-        me: 'GET /api/auth/me (Protected)'
+        me: 'GET /api/auth/me (Protected)',
+        signupInitiate: 'POST /api/auth/signup/initiate',
+        signupVerify: 'POST /api/auth/signup/verify',
+        signupComplete: 'POST /api/auth/signup/complete'
       },
       events: {
         list: 'GET /api/events',
