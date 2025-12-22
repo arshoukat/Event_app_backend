@@ -14,16 +14,49 @@ const userRoutes = require('./routes/user.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // Connect to database
 connectDB();
 
 // Middleware
 app.use(helmet());
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*', // Allow all origins in development, set specific origin in production
-  credentials: true
-}));
+// Configure CORS: support a comma-separated list in CORS_ORIGIN (e.g. "http://localhost:3000,http://localhost:8082").
+// If a specific origin(s) is provided we enable credentials; otherwise use wildcard without credentials.
+const rawCors = process.env.CORS_ORIGIN || '*';
+let originOption;
+let credentialsOption = false;
+if (rawCors === '*') {
+  originOption = '*';
+  credentialsOption = false;
+} else {
+  const allowed = rawCors.split(',').map(s => s.trim()).filter(Boolean);
+  // origin function used by cors middleware to reflect back allowed origin when matched
+  originOption = function (origin, callback) {
+    // allow non-browser requests with no origin (curl, server-to-server)
+    if (!origin) return callback(null, true);
+    // Allow exact matches from the allowed list
+    if (allowed.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+    // In development, allow any localhost origin (different ports) to simplify testing
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const url = new URL(origin);
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+          return callback(null, true);
+        }
+      } catch (e) {
+        // ignore malformed origin
+      }
+    }
+    return callback(new Error('Not allowed by CORS'));
+  };
+  credentialsOption = true;
+  console.log('CORS allowed origins:', allowed);
+}
+const corsOptions = { origin: originOption, credentials: credentialsOption };
+app.use(cors(corsOptions));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -85,8 +118,8 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
