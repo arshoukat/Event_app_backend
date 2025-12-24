@@ -1,29 +1,76 @@
 const Event = require('../models/Event.model');
+const { processBase64Image, deleteImage } = require('../utils/imageProcessor');
+const { 
+  isValidISODate, 
+  isEndTimeAfterStartTime, 
+  validatePriceArray, 
+  validateTags,
+  validateEmails 
+} = require('../utils/validators');
 
 // @desc    Get all events
 // @route   GET /api/events
 // @access  Public
 exports.getEvents = async (req, res, next) => {
   try {
-    const { category, status, search } = req.query;
+    const { category, status, search, visibility } = req.query;
     let query = {};
 
-    if (category) {
-      query.category = category;
-    }
-
+    // Only show published events by default
     if (status) {
       query.status = status;
     } else {
       query.status = 'published';
     }
 
+    // Handle visibility - public events are visible to all, private only to invited users
+    if (visibility) {
+      query.visibility = visibility;
+      // If private and user is authenticated, filter by invited emails
+      if (visibility === 'private' && req.user) {
+        query.invitedEmails = req.user.email;
+      }
+    } else {
+      // Default: show public events, or private events if user is authenticated and invited
+      if (req.user) {
+        // Authenticated user: show public events OR private events they're invited to
+        query.$or = [
+          { visibility: 'public' },
+          { 
+            visibility: 'private',
+            invitedEmails: req.user.email
+          }
+        ];
+      } else {
+        // Unauthenticated: only show public events
+        query.visibility = 'public';
+      }
+    }
+
+    if (category) {
+      query.category = category;
+    }
+
     if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } }
-      ];
+      const searchConditions = {
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { location: { $regex: search, $options: 'i' } },
+          { venue: { $regex: search, $options: 'i' } }
+        ]
+      };
+      
+      // If we have visibility $or, combine with $and
+      if (query.$or) {
+        query.$and = [
+          { $or: query.$or },
+          searchConditions
+        ];
+        delete query.$or;
+      } else {
+        Object.assign(query, searchConditions);
+      }
     }
 
     const events = await Event.find(query)
@@ -71,14 +118,187 @@ exports.getEvent = async (req, res, next) => {
 // @access  Private
 exports.createEvent = async (req, res, next) => {
   try {
-    req.body.createdBy = req.user.id;
-    const event = await Event.create(req.body);
+    const {
+      title,
+      description,
+      date,
+      startTime,
+      endTime,
+      location,
+      venue,
+      category,
+      price,
+      capacity,
+      status,
+      imageUrl,
+      tags,
+      visibility,
+      invitedEmails,
+      licenseFile,
+      iban
+    } = req.body;
+
+    // Validation errors object
+    const errors = {};
+
+    // Required field validations
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      errors.title = 'Title is required and must be a non-empty string';
+    }
+
+    if (!description || typeof description !== 'string' || description.trim() === '') {
+      errors.description = 'Description is required and must be a non-empty string';
+    }
+
+    if (!date || !isValidISODate(date)) {
+      errors.date = 'Date is required and must be a valid ISO 8601 date string';
+    }
+
+    if (!startTime || !isValidISODate(startTime)) {
+      errors.startTime = 'Start time is required and must be a valid ISO 8601 date string';
+    }
+
+    if (!endTime || !isValidISODate(endTime)) {
+      errors.endTime = 'End time is required and must be a valid ISO 8601 date string';
+    }
+
+    // Validate endTime is after startTime
+    if (startTime && endTime && !isEndTimeAfterStartTime(startTime, endTime)) {
+      errors.endTime = 'End time must be after start time';
+    }
+
+    // Location validation (required for in-person events)
+    // For now, we'll make it optional but you can add eventType check if needed
+    if (location && typeof location !== 'string') {
+      errors.location = 'Location must be a string';
+    }
+
+    // Category validation
+    const validCategories = ['music', 'tech', 'art', 'sports', 'food', 'networking', 'wellness', 'education', 'entertainment', 'other'];
+    if (!category || !validCategories.includes(category)) {
+      errors.category = `Category is required and must be one of: ${validCategories.join(', ')}`;
+    }
+
+    // Visibility validation
+    if (!visibility || !['public', 'private'].includes(visibility)) {
+      errors.visibility = "Visibility is required and must be either 'public' or 'private'";
+    }
+
+    // Price validation
+    const priceValidation = validatePriceArray(price);
+    if (!priceValidation.valid) {
+      errors.price = priceValidation.message;
+    } else if (price && price.length > 0) {
+      // Check if at least one seat type has price > 0 for paid events
+      const hasPaidSeat = price.some(seat => seat.price > 0);
+      if (!hasPaidSeat) {
+        errors.price = 'At least one seat type must have a price greater than 0 for paid events';
+      }
+    }
+
+    // Tags validation
+    const tagsValidation = validateTags(tags);
+    if (!tagsValidation.valid) {
+      errors.tags = tagsValidation.message;
+    }
+
+    // Private event validation
+    if (visibility === 'private') {
+      if (!invitedEmails || !Array.isArray(invitedEmails) || invitedEmails.length === 0) {
+        errors.invitedEmails = 'At least one email is required for private events';
+      } else {
+        const emailValidation = validateEmails(invitedEmails);
+        if (!emailValidation.valid) {
+          errors.invitedEmails = emailValidation.message;
+        }
+      }
+    }
+
+    // License file validation (if requiresLicense is true, but we'll make it optional for now)
+    if (licenseFile && typeof licenseFile !== 'string') {
+      errors.licenseFile = 'License file must be a string';
+    }
+
+    // Capacity validation
+    if (capacity !== undefined && (typeof capacity !== 'number' || capacity < 0)) {
+      errors.capacity = 'Capacity must be a non-negative number';
+    }
+
+    // Status validation
+    if (status && !['draft', 'published'].includes(status)) {
+      errors.status = "Status must be either 'draft' or 'published'";
+    }
+
+    // If there are validation errors, return them
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors
+      });
+    }
+
+    // Process image if provided
+    let processedImageUrl = null;
+    if (imageUrl && imageUrl !== 'null') {
+      try {
+        processedImageUrl = await processBase64Image(imageUrl);
+      } catch (imageError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Image processing failed',
+          details: {
+            imageUrl: imageError.message
+          }
+        });
+      }
+    }
+
+    // Prepare event data
+    const eventData = {
+      title: title.trim(),
+      description: description.trim(),
+      date: new Date(date),
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      location: location ? location.trim() : null,
+      venue: venue ? venue.trim() : null,
+      category,
+      price: price || [],
+      capacity: capacity || 0,
+      status: status || 'published',
+      imageUrl: processedImageUrl,
+      tags: tags || [],
+      visibility,
+      invitedEmails: visibility === 'private' ? invitedEmails : [],
+      licenseFile: licenseFile || null,
+      iban: iban ? iban.trim() : null,
+      createdBy: req.user.id
+    };
+
+    // Create event
+    const event = await Event.create(eventData);
+
+    // Populate createdBy field
+    await event.populate('createdBy', 'name email');
 
     res.status(201).json({
       success: true,
+      message: 'Event created successfully',
       data: event
     });
   } catch (error) {
+    // If event creation fails and image was processed, delete the image
+    if (req.body.imageUrl && req.body.imageUrl !== 'null') {
+      try {
+        const processedImageUrl = await processBase64Image(req.body.imageUrl).catch(() => null);
+        if (processedImageUrl) {
+          deleteImage(processedImageUrl);
+        }
+      } catch (e) {
+        // Ignore image deletion errors
+      }
+    }
     next(error);
   }
 };

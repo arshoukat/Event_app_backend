@@ -36,3 +36,7 @@ build/
 .expo/
 **/web-build/
 
+# Uploads
+uploads/
+**/uploads/
+

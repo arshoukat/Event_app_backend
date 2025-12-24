@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 require('dotenv').config();
 
 const connectDB = require('./config/database');
@@ -11,6 +12,7 @@ const errorHandler = require('./middleware/errorHandler');
 const authRoutes = require('./routes/auth.routes');
 const eventRoutes = require('./routes/event.routes');
 const userRoutes = require('./routes/user.routes');
+const paymentRoutes = require('./routes/payment.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -58,8 +60,11 @@ if (rawCors === '*') {
 const corsOptions = { origin: originOption, credentials: credentialsOption };
 app.use(cors(corsOptions));
 app.use(morgan('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' })); // Increase limit to 10MB for large payloads (images, etc.)
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Serve static files (uploaded images)
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Health check route
 app.get('/health', (req, res) => {
@@ -96,6 +101,12 @@ app.get('/api', (req, res) => {
       users: {
         profile: 'GET /api/users/profile (Protected)',
         updateProfile: 'PUT /api/users/profile (Protected)'
+      },
+      payments: {
+        createEventWithPayment: 'POST /api/payments/events/create-with-payment (Protected)',
+        processPayment: 'POST /api/payments/process (Protected)',
+        getPaymentStatus: 'GET /api/payments/:paymentId/status (Protected)',
+        getUserPayments: 'GET /api/payments (Protected)'
       }
     }
   });
@@ -105,6 +116,7 @@ app.get('/api', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // 404 handler
 app.use((req, res) => {
