@@ -118,6 +118,30 @@ exports.getEvent = async (req, res, next) => {
 // @access  Private
 exports.createEvent = async (req, res, next) => {
   try {
+    // Handle multipart/form-data (with file upload) or JSON (with base64)
+    let eventDataFromBody;
+    
+    // Check if request is multipart/form-data (has file or eventData string)
+    if (req.body.eventData) {
+      // Parse eventData JSON string from multipart form
+      try {
+        eventDataFromBody = typeof req.body.eventData === 'string' 
+          ? JSON.parse(req.body.eventData) 
+          : req.body.eventData;
+      } catch (parseError) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid eventData JSON',
+          details: {
+            eventData: 'Failed to parse eventData JSON string'
+          }
+        });
+      }
+    } else {
+      // Regular JSON request (backward compatibility)
+      eventDataFromBody = req.body;
+    }
+
     const {
       title,
       description,
@@ -130,13 +154,13 @@ exports.createEvent = async (req, res, next) => {
       price,
       capacity,
       status,
-      imageUrl,
+      imageUrl, // For base64 images (backward compatibility)
       tags,
       visibility,
       invitedEmails,
       licenseFile,
       iban
-    } = req.body;
+    } = eventDataFromBody;
 
     // Validation errors object
     const errors = {};
@@ -240,7 +264,13 @@ exports.createEvent = async (req, res, next) => {
 
     // Process image if provided
     let processedImageUrl = null;
-    if (imageUrl && imageUrl !== 'null') {
+    
+    // Priority: 1. File upload (multipart), 2. Base64 (JSON - backward compatibility)
+    if (req.file) {
+      // File uploaded via multipart/form-data
+      processedImageUrl = `/uploads/events/${req.file.filename}`;
+    } else if (imageUrl && imageUrl !== 'null') {
+      // Base64 image (backward compatibility)
       try {
         processedImageUrl = await processBase64Image(imageUrl);
       } catch (imageError) {
@@ -288,8 +318,21 @@ exports.createEvent = async (req, res, next) => {
       data: event
     });
   } catch (error) {
-    // If event creation fails and image was processed, delete the image
-    if (req.body.imageUrl && req.body.imageUrl !== 'null') {
+    // If event creation fails and image was uploaded, delete the image
+    if (req.file) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const imagePath = path.join(__dirname, '../../uploads/events', req.file.filename);
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      } catch (e) {
+        // Ignore image deletion errors
+        console.error('Error deleting uploaded image:', e);
+      }
+    } else if (req.body.imageUrl && req.body.imageUrl !== 'null') {
+      // Base64 image cleanup (backward compatibility)
       try {
         const processedImageUrl = await processBase64Image(req.body.imageUrl).catch(() => null);
         if (processedImageUrl) {
