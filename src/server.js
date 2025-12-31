@@ -105,6 +105,7 @@ app.get('/api', (req, res) => {
       payments: {
         createEventWithPayment: 'POST /api/payments/events/create-with-payment (Protected)',
         processPayment: 'POST /api/payments/process (Protected)',
+        processEventPaymentWithIBAN: 'POST /api/payments/event/:eventId/pay (Protected)',
         getPaymentStatus: 'GET /api/payments/:paymentId/status (Protected)',
         getUserPayments: 'GET /api/payments (Protected)'
       }

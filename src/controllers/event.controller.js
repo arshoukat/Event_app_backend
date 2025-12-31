@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Event = require('../models/Event.model');
 const { processBase64Image, deleteImage } = require('../utils/imageProcessor');
 const { 
@@ -93,7 +94,17 @@ exports.getEvents = async (req, res, next) => {
 // @access  Public
 exports.getEvent = async (req, res, next) => {
   try {
-    const event = await Event.findById(req.params.id)
+    const { id } = req.params;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format. Event ID must be a valid MongoDB ObjectId.'
+      });
+    }
+
+    const event = await Event.findById(id)
       .populate('createdBy', 'name email')
       .populate('attendees', 'name email');
 
@@ -351,7 +362,17 @@ exports.createEvent = async (req, res, next) => {
 // @access  Private
 exports.updateEvent = async (req, res, next) => {
   try {
-    let event = await Event.findById(req.params.id);
+    const { id } = req.params;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format. Event ID must be a valid MongoDB ObjectId.'
+      });
+    }
+
+    let event = await Event.findById(id);
 
     if (!event) {
       return res.status(404).json({
@@ -368,7 +389,7 @@ exports.updateEvent = async (req, res, next) => {
       });
     }
 
-    event = await Event.findByIdAndUpdate(req.params.id, req.body, {
+    event = await Event.findByIdAndUpdate(id, req.body, {
       new: true,
       runValidators: true
     });
@@ -387,7 +408,17 @@ exports.updateEvent = async (req, res, next) => {
 // @access  Private
 exports.deleteEvent = async (req, res, next) => {
   try {
-    const event = await Event.findById(req.params.id);
+    const { id } = req.params;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format. Event ID must be a valid MongoDB ObjectId.'
+      });
+    }
+
+    const event = await Event.findById(id);
 
     if (!event) {
       return res.status(404).json({
@@ -420,7 +451,17 @@ exports.deleteEvent = async (req, res, next) => {
 // @access  Private
 exports.registerForEvent = async (req, res, next) => {
   try {
-    const event = await Event.findById(req.params.id);
+    const { id } = req.params;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format. Event ID must be a valid MongoDB ObjectId.'
+      });
+    }
+
+    const event = await Event.findById(id);
 
     if (!event) {
       return res.status(404).json({
