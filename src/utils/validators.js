@@ -59,6 +59,21 @@ function isEndTimeAfterStartTime(startTime, endTime) {
 }
 
 /**
+ * Validate that endDate is greater than or equal to startDate
+ * @param {string} startDate - Start date ISO string
+ * @param {string} endDate - End date ISO string
+ * @returns {boolean} - True if endDate is greater than or equal to startDate
+ */
+function isEndDateAfterStartDate(startDate, endDate) {
+  if (!startDate || !endDate) return false;
+  
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  return end >= start;
+}
+
+/**
  * Validate price array structure
  * @param {Array} priceArray - Price array to validate
  * @returns {Object} - { valid: boolean, message: string }
@@ -123,6 +138,7 @@ module.exports = {
   validateEmails,
   isValidISODate,
   isEndTimeAfterStartTime,
+  isEndDateAfterStartDate,
   validatePriceArray,
   validateTags
 };

@@ -38,6 +38,29 @@ const userSchema = new mongoose.Schema({
   otpExpiry: {
     type: Date,
     select: false
+  },
+  iban: {
+    type: String,
+    default: null,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        // IBAN validation: 2 letters + 2 digits + up to 30 alphanumeric
+        // Allow empty (optional field)
+        if (!v || v === '') return true;
+        // Remove spaces and convert to uppercase for validation
+        const cleaned = v.replace(/\s/g, '').toUpperCase();
+        // IBAN format: 2 letters (country code) + 2 digits (check digits) + up to 30 alphanumeric
+        const ibanRegex = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$/;
+        return ibanRegex.test(cleaned);
+      },
+      message: 'Invalid IBAN format. IBAN must be 2 letters followed by 2 digits and up to 30 alphanumeric characters.'
+    },
+    set: function(v) {
+      // Clean and normalize IBAN before storing (remove spaces, uppercase)
+      if (!v || v === '') return null;
+      return v.replace(/\s/g, '').toUpperCase();
+    }
   }
 }, {
   timestamps: true

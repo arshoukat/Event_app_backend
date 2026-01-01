@@ -24,8 +24,16 @@ exports.updateProfile = async (req, res, next) => {
     const fieldsToUpdate = {
       name: req.body.name,
       email: req.body.email,
-      phone: req.body.phone
+      phone: req.body.phone,
+      iban: req.body.iban // IBAN will be cleaned and validated by schema
     };
+
+    // Remove undefined fields (only update fields that are provided)
+    Object.keys(fieldsToUpdate).forEach(key => {
+      if (fieldsToUpdate[key] === undefined) {
+        delete fieldsToUpdate[key];
+      }
+    });
 
     const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
       new: true,
@@ -34,6 +42,7 @@ exports.updateProfile = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      message: 'Profile updated successfully',
       data: user
     });
   } catch (error) {

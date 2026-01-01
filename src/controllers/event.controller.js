@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 const Event = require('../models/Event.model');
+const User = require('../models/User.model');
 const { processBase64Image, deleteImage } = require('../utils/imageProcessor');
 const { 
   isValidISODate, 
-  isEndTimeAfterStartTime, 
+  isEndTimeAfterStartTime,
+  isEndDateAfterStartDate, 
   validatePriceArray, 
   validateTags,
   validateEmails 
@@ -77,7 +79,7 @@ exports.getEvents = async (req, res, next) => {
     const events = await Event.find(query)
       .populate('createdBy', 'name email')
       .populate('attendees', 'name email')
-      .sort({ date: 1 });
+      .sort({ startDate: 1, date: 1 }); // Use startDate primarily, fall back to date for backward compatibility
 
     res.status(200).json({
       success: true,
@@ -156,9 +158,11 @@ exports.createEvent = async (req, res, next) => {
     const {
       title,
       description,
-      date,
-      startTime,
-      endTime,
+      startDate,  // NEW: Primary field
+      endDate,    // NEW: Primary field
+      date,       // Legacy: backward compatibility
+      startTime,  // Legacy: backward compatibility
+      endTime,    // Legacy: backward compatibility (deprecated)
       location,
       venue,
       category,
@@ -185,21 +189,66 @@ exports.createEvent = async (req, res, next) => {
       errors.description = 'Description is required and must be a non-empty string';
     }
 
-    if (!date || !isValidISODate(date)) {
-      errors.date = 'Date is required and must be a valid ISO 8601 date string';
-    }
-
-    if (!startTime || !isValidISODate(startTime)) {
-      errors.startTime = 'Start time is required and must be a valid ISO 8601 date string';
-    }
-
-    if (!endTime || !isValidISODate(endTime)) {
-      errors.endTime = 'End time is required and must be a valid ISO 8601 date string';
-    }
-
-    // Validate endTime is after startTime
-    if (startTime && endTime && !isEndTimeAfterStartTime(startTime, endTime)) {
-      errors.endTime = 'End time must be after start time';
+    // Determine which format is being used (new or legacy)
+    let finalStartDate, finalEndDate, finalDate, finalStartTime;
+    
+    if (startDate && endDate) {
+      // NEW FORMAT: Using startDate and endDate
+      if (!isValidISODate(startDate)) {
+        errors.startDate = 'Start date is required and must be a valid ISO 8601 date string';
+      }
+      
+      if (!isValidISODate(endDate)) {
+        errors.endDate = 'End date is required and must be a valid ISO 8601 date string';
+      }
+      
+      // Validate endDate is greater than or equal to startDate
+      if (startDate && endDate && isValidISODate(startDate) && isValidISODate(endDate)) {
+        if (!isEndDateAfterStartDate(startDate, endDate)) {
+          errors.endDate = 'End date must be greater than or equal to start date';
+        }
+      }
+      
+      finalStartDate = startDate;
+      finalEndDate = endDate;
+      // For backward compatibility, set date and startTime from startDate
+      finalDate = startDate;
+      finalStartTime = startDate;
+      
+    } else if (date && startTime && endTime) {
+      // LEGACY FORMAT: Using date, startTime, and endTime (backward compatibility)
+      if (!isValidISODate(date)) {
+        errors.date = 'Date is required and must be a valid ISO 8601 date string';
+      }
+      
+      if (!isValidISODate(startTime)) {
+        errors.startTime = 'Start time is required and must be a valid ISO 8601 date string';
+      }
+      
+      if (!isValidISODate(endTime)) {
+        errors.endTime = 'End time is required and must be a valid ISO 8601 date string';
+      }
+      
+      // Validate endTime is after startTime
+      if (startTime && endTime && isValidISODate(startTime) && isValidISODate(endTime)) {
+        if (!isEndTimeAfterStartTime(startTime, endTime)) {
+          errors.endTime = 'End time must be after start time';
+        }
+      }
+      
+      finalStartDate = startTime;
+      finalEndDate = endTime;
+      finalDate = date;
+      finalStartTime = startTime;
+      
+    } else {
+      // Neither format is complete
+      if (!startDate && !date) {
+        errors.startDate = 'Start date is required (or use legacy date field)';
+      }
+      if (!endDate && !endTime) {
+        errors.endDate = 'End date is required (or use legacy endTime field)';
+      }
     }
 
     // Location validation (required for in-person events)
@@ -295,13 +344,24 @@ exports.createEvent = async (req, res, next) => {
       }
     }
 
-    // Prepare event data
+    // Update user with IBAN if provided (store in user collection for reuse)
+    if (iban && iban.trim() !== '') {
+      await User.findByIdAndUpdate(
+        req.user.id,
+        { iban: iban.trim() },
+        { new: true }
+      );
+    }
+
+    // Prepare event data (IBAN is not stored in event, it's stored in user collection)
     const eventData = {
       title: title.trim(),
       description: description.trim(),
-      date: new Date(date),
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
+      startDate: new Date(finalStartDate),
+      endDate: new Date(finalEndDate),
+      // Legacy fields for backward compatibility
+      date: finalDate ? new Date(finalDate) : new Date(finalStartDate),
+      startTime: finalStartTime ? new Date(finalStartTime) : new Date(finalStartDate),
       location: location ? location.trim() : null,
       venue: venue ? venue.trim() : null,
       category,
@@ -313,7 +373,6 @@ exports.createEvent = async (req, res, next) => {
       visibility,
       invitedEmails: visibility === 'private' ? invitedEmails : [],
       licenseFile: licenseFile || null,
-      iban: iban ? iban.trim() : null,
       createdBy: req.user.id
     };
 
@@ -389,7 +448,92 @@ exports.updateEvent = async (req, res, next) => {
       });
     }
 
-    event = await Event.findByIdAndUpdate(id, req.body, {
+    // Process date fields if provided (handle both new and legacy formats)
+    const updateData = { ...req.body };
+    const { startDate, endDate, date, startTime, endTime } = req.body;
+    
+    if (startDate || endDate || date || startTime || endTime) {
+      let finalStartDate, finalEndDate, finalDate, finalStartTime;
+      
+      if (startDate && endDate) {
+        // NEW FORMAT: Using startDate and endDate
+        if (!isValidISODate(startDate)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { startDate: 'Start date must be a valid ISO 8601 date string' }
+          });
+        }
+        
+        if (!isValidISODate(endDate)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { endDate: 'End date must be a valid ISO 8601 date string' }
+          });
+        }
+        
+        // Validate endDate is greater than or equal to startDate
+        if (!isEndDateAfterStartDate(startDate, endDate)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { endDate: 'End date must be greater than or equal to start date' }
+          });
+        }
+        
+        finalStartDate = new Date(startDate);
+        finalEndDate = new Date(endDate);
+        finalDate = finalStartDate;
+        finalStartTime = finalStartDate;
+        
+      } else if (date && startTime && endTime) {
+        // LEGACY FORMAT: Using date, startTime, and endTime (backward compatibility)
+        if (!isValidISODate(date) || !isValidISODate(startTime) || !isValidISODate(endTime)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { date: 'Date fields must be valid ISO 8601 date strings' }
+          });
+        }
+        
+        if (!isEndTimeAfterStartTime(startTime, endTime)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { endTime: 'End time must be after start time' }
+          });
+        }
+        
+        finalStartDate = new Date(startTime);
+        finalEndDate = new Date(endTime);
+        finalDate = new Date(date);
+        finalStartTime = new Date(startTime);
+        
+      } else {
+        // Partial update - use existing values for missing fields
+        finalStartDate = startDate ? new Date(startDate) : event.startDate;
+        finalEndDate = endDate ? new Date(endDate) : event.endDate;
+        finalDate = date ? new Date(date) : (event.date || event.startDate);
+        finalStartTime = startTime ? new Date(startTime) : (event.startTime || event.startDate);
+        
+        // Validate if both dates are provided
+        if (startDate && endDate && !isEndDateAfterStartDate(startDate, endDate)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: { endDate: 'End date must be greater than or equal to start date' }
+          });
+        }
+      }
+      
+      updateData.startDate = finalStartDate;
+      updateData.endDate = finalEndDate;
+      updateData.date = finalDate;
+      updateData.startTime = finalStartTime;
+    }
+
+    event = await Event.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true
     });
@@ -493,6 +637,85 @@ exports.registerForEvent = async (req, res, next) => {
       success: true,
       message: 'Successfully registered for event',
       data: event
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get my upcoming events
+// @route   GET /api/events/my/upcoming
+// @access  Private
+exports.getMyUpcomingEvents = async (req, res, next) => {
+  try {
+    const now = new Date();
+    
+    const events = await Event.find({
+      createdBy: req.user.id,
+      startDate: { $gt: now }
+    })
+      .populate('createdBy', 'name email')
+      .populate('attendees', 'name email')
+      .sort({ startDate: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: events,
+      count: events.length,
+      message: 'Upcoming events retrieved successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get my ongoing events
+// @route   GET /api/events/my/ongoing
+// @access  Private
+exports.getMyOngoingEvents = async (req, res, next) => {
+  try {
+    const now = new Date();
+    
+    const events = await Event.find({
+      createdBy: req.user.id,
+      startDate: { $lte: now },
+      endDate: { $gte: now }
+    })
+      .populate('createdBy', 'name email')
+      .populate('attendees', 'name email')
+      .sort({ startDate: 1 });
+
+    res.status(200).json({
+      success: true,
+      data: events,
+      count: events.length,
+      message: 'Ongoing events retrieved successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get my past events
+// @route   GET /api/events/my/past
+// @access  Private
+exports.getMyPastEvents = async (req, res, next) => {
+  try {
+    const now = new Date();
+    
+    const events = await Event.find({
+      createdBy: req.user.id,
+      endDate: { $lt: now }
+    })
+      .populate('createdBy', 'name email')
+      .populate('attendees', 'name email')
+      .sort({ endDate: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: events,
+      count: events.length,
+      message: 'Past events retrieved successfully'
     });
   } catch (error) {
     next(error);
