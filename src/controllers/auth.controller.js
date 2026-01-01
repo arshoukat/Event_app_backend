@@ -65,28 +65,54 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    // Normalize email (lowercase and trim)
+    const normalizedEmail = email.toLowerCase().trim();
 
-    if (!user || !(await user.matchPassword(password))) {
+    // Check for user
+    const user = await User.findOne({ email: normalizedEmail }).select('+password');
+
+    if (!user) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
+    // Check if user has a password set
+    if (!user.password) {
+      return res.status(401).json({
+        success: false,
+        message: 'Account not fully set up. Please complete your registration.'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await user.matchPassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Credentials are valid - create JWT token
+    const token = generateToken(user._id);
+
+    // Return user data with JWT token
     res.status(200).json({
       success: true,
+      message: 'Login successful',
       data: {
         _id: user._id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         role: user.role,
-        token: generateToken(user._id)
+        token: token
       }
     });
   } catch (error) {
+    console.error('Login error:', error);
     next(error);
   }
 };
@@ -184,6 +210,8 @@ exports.signupInitiate = async (req, res, next) => {
 // @desc    Verify OTP
 // @route   POST /api/auth/signup/verify
 // @access  Public
+const Profile = require('../models/Profile.model');
+
 exports.signupVerify = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
@@ -222,22 +250,43 @@ exports.signupVerify = async (req, res, next) => {
       });
     }
 
-    // OTP is valid - return success
-    res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully'
-    });
+    // OTP is valid - create/update profile in Profile collection and remove OTP from user record
+    try {
+      // Create or update profile with verified status
+      const profile = await Profile.findOneAndUpdate(
+        { email: user.email },
+        { 
+          $set: { 
+            email: user.email,
+            verified: true
+          }
+        },
+        { upsert: true, new: true }
+      );
+
+      // Remove OTP and expiry from user document
+      await User.findByIdAndUpdate(user._id, { $unset: { otp: 1, otpExpiry: 1 } });
+
+      // Return success response
+      res.status(200).json({
+        success: true,
+        message: 'Email verified successfully'
+      });
+    } catch (dbErr) {
+      console.error('Error creating profile or removing OTP:', dbErr);
+      return res.status(500).json({ success: false, message: 'Server error during verification' });
+    }
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Complete signup - Store name and password, remove OTP
+// @desc    Complete signup - Store name and password in profile, create user
 // @route   POST /api/auth/signup/complete
 // @access  Public
 exports.signupComplete = async (req, res, next) => {
   try {
-    const { email, name, password } = req.body;
+    const { email, name, password, confirmPassword, phone } = req.body;
 
     // Validate input
     if (!email || !name || !password) {
@@ -255,56 +304,74 @@ exports.signupComplete = async (req, res, next) => {
       });
     }
 
-    // Find user
-    const user = await User.findOne({ email }).select('+otp +otpExpiry +password');
-    
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: 'User not found. Please start the signup process.'
+    // Validate confirm password
+    if (!confirmPassword || password !== confirmPassword) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Password and confirm password do not match' 
       });
     }
 
-    // Check if user already has a password (already registered)
-    if (user.password) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already registered. Please login instead.'
+    // Find verified profile - use email from request to identify profile
+    const profile = await Profile.findOne({ email, verified: true });
+    if (!profile) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email not verified. Please verify your email first.' 
       });
     }
 
-    // Hash password before updating
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-    
-    // Update user with name and password, and remove OTP fields
-    await User.findOneAndUpdate(
-      { _id: user._id },
-      {
-        $set: {
-          name: name,
-          password: hashedPassword
-        },
-        $unset: {
-          otp: 1,
-          otpExpiry: 1
-        }
-      },
-      { new: true }
-    );
-    
-    // Fetch updated user for response
-    const updatedUser = await User.findById(user._id);
+    // Use verified email from profile (not from request body) for security
+    const verifiedEmail = profile.email;
 
-    res.status(200).json({
+    // Check if user already exists using verified email
+    const existingUser = await User.findOne({ email: verifiedEmail }).select('+password');
+    if (existingUser && existingUser.password) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'User already registered. Please login instead.' 
+      });
+    }
+
+    // Update profile with name, password, and confirmPassword
+    profile.name = name;
+    profile.password = password; // Store plain password temporarily for validation
+    profile.confirmPassword = confirmPassword;
+    if (phone) profile.phone = phone;
+    await profile.save();
+
+    // Create or update user using verified email from profile
+    // Note: Pass plain password to User.create() - the User model's pre-save hook will hash it automatically
+    let user;
+    if (existingUser) {
+      // Update existing placeholder user - set plain password, pre-save hook will hash it
+      existingUser.name = name;
+      existingUser.password = password;
+      if (phone) existingUser.phone = phone;
+      user = await existingUser.save();
+    } else {
+      // Create a new user record - pass plain password, pre-save hook will hash it
+      user = await User.create({
+        name,
+        email: verifiedEmail,
+        password: password, // Pass plain password - User model will hash it
+        phone: phone || ''
+      });
+    }
+
+    // Clear OTP fields from user if they exist
+    await User.findByIdAndUpdate(user._id, { $unset: { otp: 1, otpExpiry: 1 } });
+
+    // Return auth token
+    res.status(201).json({
       success: true,
       message: 'Signup completed successfully',
       data: {
-        _id: updatedUser._id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        token: generateToken(updatedUser._id)
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        token: generateToken(user._id)
       }
     });
   } catch (error) {
