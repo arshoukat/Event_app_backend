@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const Payment = require('../models/Payment.model');
 const Event = require('../models/Event.model');
-const { encrypt, getLast4Digits, detectCardBrand } = require('../utils/encryption');
+const User = require('../models/User.model');
+const { encrypt, decrypt, getLast4Digits, detectCardBrand } = require('../utils/encryption');
 const { processPayment, getPaymentStatus, transferToIBAN } = require('../services/hyperpay.service');
 
 // @desc    Create event with payment (for paid events)
@@ -435,8 +436,8 @@ exports.processEventPaymentWithIBAN = async (req, res, next) => {
       });
     }
 
-    // Get event
-    const event = await Event.findById(eventId);
+    // Get event with creator populated
+    const event = await Event.findById(eventId).populate('createdBy');
     if (!event) {
       return res.status(404).json({
         success: false,
@@ -444,11 +445,20 @@ exports.processEventPaymentWithIBAN = async (req, res, next) => {
       });
     }
 
-    // Check if event has IBAN
-    if (!event.iban) {
+    // Get event creator's user account to retrieve IBAN
+    const eventCreator = await User.findById(event.createdBy);
+    if (!eventCreator) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event creator not found'
+      });
+    }
+
+    // Check if event creator has IBAN
+    if (!eventCreator.iban) {
       return res.status(400).json({
         success: false,
-        message: 'Event does not have an IBAN configured. Cannot process payment transfer.'
+        message: 'Event creator does not have an IBAN configured. Cannot process payment transfer.'
       });
     }
 
@@ -499,19 +509,20 @@ exports.processEventPaymentWithIBAN = async (req, res, next) => {
       });
     }
 
-    // Decode IBAN (it's stored as base64 encoded string)
+    // Decrypt IBAN from user account
     let iban;
     try {
-      // IBAN might be base64 encoded, try to decode it
-      const ibanBuffer = Buffer.from(event.iban, 'base64');
-      iban = ibanBuffer.toString('utf-8');
+      // Use the getDecryptedIBAN method to decrypt IBAN
+      iban = eventCreator.getDecryptedIBAN();
       // Validate IBAN format (basic check)
       if (!iban || iban.length < 15) {
         throw new Error('Invalid IBAN format');
       }
-    } catch (decodeError) {
-      // If decoding fails, use IBAN as-is (might already be plain text)
-      iban = event.iban;
+    } catch (decryptError) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to decrypt IBAN. Please contact support.'
+      });
     }
 
     // Generate unique transaction ID

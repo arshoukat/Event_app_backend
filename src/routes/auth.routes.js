@@ -6,7 +6,10 @@ const {
   getMe, 
   signupInitiate, 
   signupVerify, 
-  signupComplete 
+  signupComplete,
+  forgotPassword,
+  verifyForgotPasswordOTP,
+  updatePassword
 } = require('../controllers/auth.controller');
 const { protect } = require('../middleware/auth');
 
@@ -18,6 +21,13 @@ router.get('/me', protect, getMe);
 router.post('/signup/initiate', signupInitiate);
 router.post('/signup/verify', signupVerify);
 router.post('/signup/complete', signupComplete);
+
+// Forgot password flow
+router.post('/forgot-password', forgotPassword);
+router.post('/forgot-password/verify', verifyForgotPasswordOTP);
+
+// Update password
+router.put('/update-password', protect, updatePassword);
 
 module.exports = router;
 

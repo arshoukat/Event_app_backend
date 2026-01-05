@@ -7,7 +7,10 @@ const {
   createEvent,
   updateEvent,
   deleteEvent,
-  registerForEvent
+  registerForEvent,
+  getMyUpcomingEvents,
+  getMyOngoingEvents,
+  getMyPastEvents
 } = require('../controllers/event.controller');
 const { protect } = require('../middleware/auth');
 const upload = require('../config/multer');
@@ -41,6 +44,11 @@ const handleMulterError = (err, req, res, next) => {
 router.route('/')
   .get(getEvents)
   .post(protect, upload.single('coverImage'), handleMulterError, createEvent);
+
+// My events routes (must be before /:id to avoid route conflicts)
+router.get('/my/upcoming', protect, getMyUpcomingEvents);
+router.get('/my/ongoing', protect, getMyOngoingEvents);
+router.get('/my/past', protect, getMyPastEvents);
 
 router.route('/:id')
   .get(getEvent)
