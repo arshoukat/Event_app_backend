@@ -346,11 +346,12 @@ exports.createEvent = async (req, res, next) => {
 
     // Update user with IBAN if provided (store in user collection for reuse)
     if (iban && iban.trim() !== '') {
-      await User.findByIdAndUpdate(
-        req.user.id,
-        { iban: iban.trim() },
-        { new: true }
-      );
+      const user = await User.findById(req.user.id);
+      if (user) {
+        // IBAN will be cleaned by setter and encrypted by pre-save hook
+        user.iban = iban.trim();
+        await user.save();
+      }
     }
 
     // Prepare event data (IBAN is not stored in event, it's stored in user collection)

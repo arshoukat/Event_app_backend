@@ -88,35 +88,9 @@ exports.getUserById = async (req, res, next) => {
 // @access  Private
 exports.updateProfile = async (req, res, next) => {
   try {
-    const { name, phone, bio } = req.body;
-
-    // Validate input
-    if (!name && !phone && !bio) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide at least one field to update (name, phone, or bio)'
-      });
-    }
-
-    // Validate bio length if provided
-    if (bio && bio.length > 500) {
-      return res.status(400).json({
-        success: false,
-        message: 'Bio cannot exceed 500 characters'
-      });
-    }
-
-    // Build update object with only provided fields
-    const fieldsToUpdate = {};
-    if (name !== undefined) fieldsToUpdate.name = name.trim();
-    if (phone !== undefined) fieldsToUpdate.phone = phone.trim();
-    if (bio !== undefined) fieldsToUpdate.bio = bio.trim();
-
-    const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
-      new: true,
-      runValidators: true
-    });
-
+    // Find user first to use save() method (triggers pre-save hooks for encryption)
+    const user = await User.findById(req.user.id);
+    
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -124,8 +98,23 @@ exports.updateProfile = async (req, res, next) => {
       });
     }
 
-    // Decrypt IBAN before returning
-    const decryptedIban = user.getDecryptedIban();
+    // Update fields that are provided
+    if (req.body.name !== undefined) {
+      user.name = req.body.name;
+    }
+    if (req.body.email !== undefined) {
+      user.email = req.body.email;
+    }
+    if (req.body.phone !== undefined) {
+      user.phone = req.body.phone;
+    }
+    if (req.body.iban !== undefined) {
+      // IBAN will be cleaned by setter and encrypted by pre-save hook
+      user.iban = req.body.iban;
+    }
+
+    // Save user (triggers validation and pre-save hooks)
+    await user.save();
 
     res.status(200).json({
       success: true,
