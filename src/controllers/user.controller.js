@@ -16,7 +16,7 @@ exports.getProfile = async (req, res, next) => {
     }
 
     // Decrypt IBAN before returning
-    const decryptedIban = user.getDecryptedIban();
+    const decryptedIban = user.getDecryptedIBAN();
 
     res.status(200).json({
       success: true,

@@ -99,7 +99,7 @@ exports.login = async (req, res, next) => {
     const token = generateToken(user._id);
 
     // Decrypt IBAN before returning
-    const decryptedIban = user.getDecryptedIban();
+    const decryptedIban = user.getDecryptedIBAN();
 
     // Return user data with JWT token
     res.status(200).json({
