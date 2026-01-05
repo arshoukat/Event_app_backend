@@ -68,7 +68,7 @@ exports.login = async (req, res, next) => {
     // Normalize email (lowercase and trim)
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check for user
+    // Check for user (include password and iban fields)
     const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
     if (!user) {
@@ -98,6 +98,9 @@ exports.login = async (req, res, next) => {
     // Credentials are valid - create JWT token
     const token = generateToken(user._id);
 
+    // Decrypt IBAN before returning
+    const decryptedIban = user.getDecryptedIban();
+
     // Return user data with JWT token
     res.status(200).json({
       success: true,
@@ -107,6 +110,8 @@ exports.login = async (req, res, next) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        bio: user.bio,
+        iban: decryptedIban,
         role: user.role,
         token: token
       }
@@ -124,9 +129,29 @@ exports.getMe = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
 
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Decrypt IBAN before returning
+    const decryptedIban = user.getDecryptedIban();
+
     res.status(200).json({
       success: true,
-      data: user
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        bio: user.bio,
+        iban: decryptedIban,
+        role: user.role,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }
     });
   } catch (error) {
     next(error);
@@ -210,8 +235,6 @@ exports.signupInitiate = async (req, res, next) => {
 // @desc    Verify OTP
 // @route   POST /api/auth/signup/verify
 // @access  Public
-const Profile = require('../models/Profile.model');
-
 exports.signupVerify = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
@@ -224,8 +247,11 @@ exports.signupVerify = async (req, res, next) => {
       });
     }
 
+    // Normalize email
+    const normalizedEmail = email.toLowerCase().trim();
+
     // Find user with OTP
-    const user = await User.findOne({ email }).select('+otp +otpExpiry');
+    const user = await User.findOne({ email: normalizedEmail }).select('+otp +otpExpiry');
     
     if (!user || !user.otp) {
       return res.status(400).json({
@@ -250,32 +276,16 @@ exports.signupVerify = async (req, res, next) => {
       });
     }
 
-    // OTP is valid - create/update profile in Profile collection and remove OTP from user record
-    try {
-      // Create or update profile with verified status
-      const profile = await Profile.findOneAndUpdate(
-        { email: user.email },
-        { 
-          $set: { 
-            email: user.email,
-            verified: true
-          }
-        },
-        { upsert: true, new: true }
-      );
+    // OTP is valid - mark email as verified in User collection
+    user.emailVerified = true;
+    // Keep OTP until signup is completed (will be removed in signupComplete)
+    await user.save();
 
-      // Remove OTP and expiry from user document
-      await User.findByIdAndUpdate(user._id, { $unset: { otp: 1, otpExpiry: 1 } });
-
-      // Return success response
-      res.status(200).json({
-        success: true,
-        message: 'Email verified successfully'
-      });
-    } catch (dbErr) {
-      console.error('Error creating profile or removing OTP:', dbErr);
-      return res.status(500).json({ success: false, message: 'Server error during verification' });
-    }
+    // Return success response
+    res.status(200).json({
+      success: true,
+      message: 'Email verified successfully'
+    });
   } catch (error) {
     next(error);
   }
@@ -312,55 +322,48 @@ exports.signupComplete = async (req, res, next) => {
       });
     }
 
-    // Find verified profile - use email from request to identify profile
-    const profile = await Profile.findOne({ email, verified: true });
-    if (!profile) {
+    // Normalize email
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Find user with verified email
+    const existingUser = await User.findOne({ email: normalizedEmail }).select('+password +otp +otpExpiry');
+    
+    if (!existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email not found. Please complete the signup process.' 
+      });
+    }
+
+    // Check if email is verified
+    if (!existingUser.emailVerified) {
       return res.status(400).json({ 
         success: false, 
         message: 'Email not verified. Please verify your email first.' 
       });
     }
 
-    // Use verified email from profile (not from request body) for security
-    const verifiedEmail = profile.email;
-
-    // Check if user already exists using verified email
-    const existingUser = await User.findOne({ email: verifiedEmail }).select('+password');
-    if (existingUser && existingUser.password) {
+    // Check if user already has a password (already registered)
+    if (existingUser.password) {
       return res.status(400).json({ 
         success: false, 
         message: 'User already registered. Please login instead.' 
       });
     }
 
-    // Update profile with name, password, and confirmPassword
-    profile.name = name;
-    profile.password = password; // Store plain password temporarily for validation
-    profile.confirmPassword = confirmPassword;
-    if (phone) profile.phone = phone;
-    await profile.save();
+    // Update user with name, password, and phone
+    existingUser.name = name;
+    existingUser.password = password; // Pass plain password - User model's pre-save hook will hash it
+    if (phone) existingUser.phone = phone;
+    
+    // Clear OTP fields
+    existingUser.otp = undefined;
+    existingUser.otpExpiry = undefined;
+    
+    const user = await existingUser.save();
 
-    // Create or update user using verified email from profile
-    // Note: Pass plain password to User.create() - the User model's pre-save hook will hash it automatically
-    let user;
-    if (existingUser) {
-      // Update existing placeholder user - set plain password, pre-save hook will hash it
-      existingUser.name = name;
-      existingUser.password = password;
-      if (phone) existingUser.phone = phone;
-      user = await existingUser.save();
-    } else {
-      // Create a new user record - pass plain password, pre-save hook will hash it
-      user = await User.create({
-        name,
-        email: verifiedEmail,
-        password: password, // Pass plain password - User model will hash it
-        phone: phone || ''
-      });
-    }
-
-    // Clear OTP fields from user if they exist
-    await User.findByIdAndUpdate(user._id, { $unset: { otp: 1, otpExpiry: 1 } });
+    // Decrypt IBAN before returning
+    const decryptedIban = user.getDecryptedIban();
 
     // Return auth token
     res.status(201).json({
@@ -370,9 +373,233 @@ exports.signupComplete = async (req, res, next) => {
         _id: user._id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
+        bio: user.bio,
+        iban: decryptedIban,
         role: user.role,
         token: generateToken(user._id)
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Forgot password - Generate and send OTP
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    // Validate email
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an email address'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
+    }
+
+    // Normalize email (lowercase and trim)
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check if user exists and has a password (must be registered)
+    const user = await User.findOne({ email: normalizedEmail }).select('+password +otp +otpExpiry');
+    
+    if (!user) {
+      // Don't reveal if email exists or not for security
+      return res.status(200).json({
+        success: true,
+        message: 'If the email exists in our system, an OTP has been sent to your email address'
+      });
+    }
+
+    // Check if user has a password (must be fully registered)
+    if (!user.password) {
+      // Don't reveal if email exists or not for security
+      return res.status(200).json({
+        success: true,
+        message: 'If the email exists in our system, an OTP has been sent to your email address'
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+    // Update user with new OTP
+    user.otp = otp;
+    user.otpExpiry = otpExpiry;
+    await user.save();
+
+    // Send OTP via email
+    try {
+      await sendOTPEmail(normalizedEmail, otp);
+    } catch (emailError) {
+      console.error('Error sending OTP email:', emailError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send OTP email. Please try again.'
+      });
+    }
+
+    // Return success (don't reveal if email exists for security)
+    res.status(200).json({
+      success: true,
+      message: 'If the email exists in our system, an OTP has been sent to your email address'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify forgot password OTP
+// @route   POST /api/auth/forgot-password/verify
+// @access  Public
+exports.verifyForgotPasswordOTP = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+
+    // Validate input
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email and OTP'
+      });
+    }
+
+    // Normalize email
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Find user with OTP
+    const user = await User.findOne({ email: normalizedEmail }).select('+otp +otpExpiry');
+    
+    if (!user || !user.otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email or OTP not found. Please request a new OTP.'
+      });
+    }
+
+    // Check if OTP is expired
+    if (user.otpExpiry < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new OTP.'
+      });
+    }
+
+    // Verify OTP
+    if (user.otp !== otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP'
+      });
+    }
+
+    // OTP is valid - return success with authentication token
+    // Note: We don't remove OTP here yet - it will be removed when user resets password
+    // But we can generate a token for password reset flow
+    const token = generateToken(user._id);
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully',
+      data: {
+        token: token,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update password
+// @route   PUT /api/auth/update-password
+// @access  Private
+exports.updatePassword = async (req, res, next) => {
+  try {
+    const { newPassword, confirmPassword } = req.body;
+
+    // Validate input
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a new password'
+      });
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Validate confirm password
+    if (!confirmPassword || newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password and confirm password do not match'
+      });
+    }
+
+    // Get user with password field
+    const user = await User.findById(req.user.id).select('+password +otp +otpExpiry');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // If user has an existing password, check if new password is different
+    if (user.password) {
+      const isSamePassword = await user.matchPassword(newPassword);
+      if (isSamePassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'New password must be different from current password'
+        });
+      }
+    }
+
+    // If OTP exists (from forgot password flow), verify it's not expired
+    if (user.otp) {
+      if (user.otpExpiry && user.otpExpiry < new Date()) {
+        return res.status(400).json({
+          success: false,
+          message: 'OTP has expired. Please request a new OTP.'
+        });
+      }
+    }
+
+    // Update password (will be hashed by pre-save hook)
+    user.password = newPassword;
+    
+    // Clear OTP fields if they exist (from forgot password flow)
+    if (user.otp) {
+      user.otp = undefined;
+      user.otpExpiry = undefined;
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password updated successfully'
     });
   } catch (error) {
     next(error);

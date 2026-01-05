@@ -88,7 +88,10 @@ app.get('/api', (req, res) => {
         me: 'GET /api/auth/me (Protected)',
         signupInitiate: 'POST /api/auth/signup/initiate',
         signupVerify: 'POST /api/auth/signup/verify',
-        signupComplete: 'POST /api/auth/signup/complete'
+        signupComplete: 'POST /api/auth/signup/complete',
+        forgotPassword: 'POST /api/auth/forgot-password',
+        verifyForgotPasswordOTP: 'POST /api/auth/forgot-password/verify',
+        updatePassword: 'PUT /api/auth/update-password (Protected)'
       },
       events: {
         list: 'GET /api/events',
@@ -100,7 +103,8 @@ app.get('/api', (req, res) => {
       },
       users: {
         profile: 'GET /api/users/profile (Protected)',
-        updateProfile: 'PUT /api/users/profile (Protected)'
+        updateProfile: 'PUT /api/users/profile (Protected)',
+        getUserById: 'GET /api/users/:id (Protected)'
       },
       payments: {
         createEventWithPayment: 'POST /api/payments/events/create-with-payment (Protected)',
