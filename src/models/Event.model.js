@@ -64,6 +64,15 @@ const eventSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  maxAttendees: {
+    type: Number,
+    default: null,
+    min: 1
+  },
+  shareToken: {
+    type: String,
+    default: null
+  },
   imageUrl: {
     type: String,
     default: null
@@ -118,6 +127,33 @@ eventSchema.pre('validate', function(next) {
   next();
 });
 
+// Generate shareToken before saving if private and token doesn't exist
+eventSchema.pre('save', async function(next) {
+  if (this.visibility === 'private' && !this.shareToken) {
+    const crypto = require('crypto');
+    // Generate unique token
+    let token;
+    let isUnique = false;
+    
+    while (!isUnique) {
+      token = crypto.randomBytes(32).toString('hex');
+      const existing = await mongoose.model('Event').findOne({ shareToken: token });
+      if (!existing) {
+        isUnique = true;
+      }
+    }
+    
+    this.shareToken = token;
+  }
+  
+  // Clear shareToken if event is changed to public
+  if (this.visibility === 'public' && this.shareToken) {
+    this.shareToken = null;
+  }
+  
+  next();
+});
+
 // Index for faster queries
 eventSchema.index({ category: 1 });
 eventSchema.index({ visibility: 1 });
@@ -126,6 +162,10 @@ eventSchema.index({ createdBy: 1 });
 eventSchema.index({ date: 1 }); // Keep for backward compatibility
 eventSchema.index({ startDate: 1 });
 eventSchema.index({ endDate: 1 });
+// Unique sparse index on shareToken (for fast lookups)
+eventSchema.index({ shareToken: 1 }, { unique: true, sparse: true });
+// Compound index for querying private events by visibility and shareToken
+// Note: This doesn't conflict with the single-field index above as they serve different purposes
 
 module.exports = mongoose.model('Event', eventSchema);
 

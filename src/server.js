@@ -13,6 +13,8 @@ const authRoutes = require('./routes/auth.routes');
 const eventRoutes = require('./routes/event.routes');
 const userRoutes = require('./routes/user.routes');
 const paymentRoutes = require('./routes/payment.routes');
+const bookingRoutes = require('./routes/booking.routes');
+const savedEventRoutes = require('./routes/savedEvent.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -75,6 +77,10 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Share token route (public, no auth required) - must be before /api routes
+const { getEventByShareToken } = require('./controllers/event.controller');
+app.get('/share/:shareToken', getEventByShareToken);
+
 // API info route
 app.get('/api', (req, res) => {
   res.status(200).json({
@@ -99,7 +105,11 @@ app.get('/api', (req, res) => {
         create: 'POST /api/events (Protected)',
         update: 'PUT /api/events/:id (Protected)',
         delete: 'DELETE /api/events/:id (Protected)',
-        register: 'POST /api/events/:id/register (Protected)'
+        register: 'POST /api/events/:id/register (Protected)',
+        getByShareToken: 'GET /api/events/share/:shareToken (Public)',
+        getShareLink: 'GET /api/events/:id/share-link (Protected)',
+        getManagement: 'GET /api/events/:id/manage (Protected)',
+        checkCapacity: 'POST /api/events/:id/check-capacity (Protected)'
       },
       users: {
         profile: 'GET /api/users/profile (Protected)',
@@ -112,6 +122,15 @@ app.get('/api', (req, res) => {
         processEventPaymentWithIBAN: 'POST /api/payments/event/:eventId/pay (Protected)',
         getPaymentStatus: 'GET /api/payments/:paymentId/status (Protected)',
         getUserPayments: 'GET /api/payments (Protected)'
+      },
+      bookings: {
+        getMyBookings: 'GET /api/bookings?userId=... (Protected)',
+        create: 'POST /api/bookings (Protected)'
+      },
+      savedEvents: {
+        getSavedEvents: 'GET /api/saved-events?userId=... (Protected)',
+        saveEvent: 'POST /api/saved-events (Protected)',
+        unsaveEvent: 'DELETE /api/saved-events/:id (Protected)'
       }
     }
   });
@@ -122,6 +141,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/saved-events', savedEventRoutes);
 
 // 404 handler
 app.use((req, res) => {

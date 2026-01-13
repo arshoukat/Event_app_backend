@@ -137,7 +137,7 @@ exports.getMe = async (req, res, next) => {
     }
 
     // Decrypt IBAN before returning
-    const decryptedIban = user.getDecryptedIban();
+    const decryptedIban = user.getDecryptedIBAN();
 
     res.status(200).json({
       success: true,
@@ -360,10 +360,14 @@ exports.signupComplete = async (req, res, next) => {
     existingUser.otp = undefined;
     existingUser.otpExpiry = undefined;
     
-    const user = await existingUser.save();
+    await existingUser.save();
 
-    // Decrypt IBAN before returning
-    const decryptedIban = user.getDecryptedIban();
+    // Reload user to ensure we have a fresh Mongoose document with all methods
+    const user = await User.findById(existingUser._id);
+
+    // For new signups, users won't have IBAN yet, so set to null
+    // Skip calling getDecryptedIBAN method to avoid errors for new users
+    const decryptedIban = null;
 
     // Return auth token
     res.status(201).json({

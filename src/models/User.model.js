@@ -134,12 +134,24 @@ userSchema.methods.getDecryptedIBAN = function() {
   try {
     // Check if IBAN is encrypted (format: iv:tag:encryptedData)
     if (this.iban.includes(':') && this.iban.split(':').length === 3) {
-      return decrypt(this.iban);
+      try {
+        return decrypt(this.iban);
+      } catch (decryptError) {
+        // Decryption failed - could be due to:
+        // 1. Wrong encryption key
+        // 2. Corrupted data
+        // 3. Data encrypted with different key
+        console.error('Error decrypting IBAN:', decryptError.message);
+        console.error('This usually means ENCRYPTION_KEY has changed or the data was encrypted with a different key.');
+        console.error('IBAN format check:', this.iban.substring(0, 50) + '...');
+        // Return null instead of throwing to prevent breaking the API
+        return null;
+      }
     }
-    // If not encrypted (legacy data), return as-is
+    // If not encrypted (legacy data or plain text), return as-is
     return this.iban;
   } catch (error) {
-    console.error('Error decrypting IBAN:', error);
+    console.error('Unexpected error in getDecryptedIBAN:', error);
     return null;
   }
 };
@@ -153,11 +165,17 @@ userSchema.methods.toJSON = function() {
     try {
       // Check if IBAN is encrypted (format: iv:tag:encryptedData)
       if (obj.iban.includes(':') && obj.iban.split(':').length === 3) {
-        obj.iban = decrypt(obj.iban);
+        try {
+          obj.iban = decrypt(obj.iban);
+        } catch (decryptError) {
+          // Decryption failed - set to null to prevent exposing corrupted data
+          console.error('Error decrypting IBAN in toJSON:', decryptError.message);
+          obj.iban = null;
+        }
       }
       // If not encrypted (legacy data), keep as-is
     } catch (error) {
-      console.error('Error decrypting IBAN in toJSON:', error);
+      console.error('Unexpected error decrypting IBAN in toJSON:', error);
       obj.iban = null;
     }
   }

@@ -42,7 +42,13 @@ NODE_ENV=development
 PORT=5001
 MONGODB_URI=mongodb://localhost:27017/eventapp
 JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+ENCRYPTION_KEY=157a9f386fb83fe39cac57cd3ab65ec92d12501bff99abb1fe27f1c048744c07
 CORS_ORIGIN=http://localhost:3000
+```
+
+**Important:** Generate a secure `ENCRYPTION_KEY` (64 hex characters = 32 bytes). You can generate one using:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 **Note:** Port 5001 is used instead of 5000 to avoid conflicts with macOS AirPlay Receiver.
@@ -105,6 +111,7 @@ The backend API will be running on `http://localhost:5001`
 - `PORT` - Server port (default: 5001, changed from 5000 to avoid macOS AirPlay conflict)
 - `MONGODB_URI` - MongoDB connection string
 - `JWT_SECRET` - Secret key for JWT tokens (use a strong random string in production)
+- `ENCRYPTION_KEY` - Encryption key for sensitive data like IBAN (64 hex characters = 32 bytes). **Required for IBAN encryption/decryption.**
 - `CORS_ORIGIN` - Allowed CORS origin
 
 ## Troubleshooting

@@ -116,6 +116,9 @@ exports.updateProfile = async (req, res, next) => {
     // Save user (triggers validation and pre-save hooks)
     await user.save();
 
+    // Decrypt IBAN before returning
+    const decryptedIban = user.getDecryptedIBAN();
+
     res.status(200).json({
       success: true,
       message: 'Profile updated successfully',

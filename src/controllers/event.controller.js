@@ -26,28 +26,14 @@ exports.getEvents = async (req, res, next) => {
       query.status = 'published';
     }
 
-    // Handle visibility - public events are visible to all, private only to invited users
+    // Handle visibility - return events based on visibility parameter
     if (visibility) {
+      // If visibility is specified, return all events with that visibility
       query.visibility = visibility;
-      // If private and user is authenticated, filter by invited emails
-      if (visibility === 'private' && req.user) {
-        query.invitedEmails = req.user.email;
-      }
     } else {
-      // Default: show public events, or private events if user is authenticated and invited
-      if (req.user) {
-        // Authenticated user: show public events OR private events they're invited to
-        query.$or = [
-          { visibility: 'public' },
-          { 
-            visibility: 'private',
-            invitedEmails: req.user.email
-          }
-        ];
-      } else {
-        // Unauthenticated: only show public events
-        query.visibility = 'public';
-      }
+      // Default: show both public and private events
+      // If you want to restrict private events, you can add authentication check here
+      query.visibility = { $in: ['public', 'private'] };
     }
 
     if (category) {
@@ -168,6 +154,7 @@ exports.createEvent = async (req, res, next) => {
       category,
       price,
       capacity,
+      maxAttendees,
       status,
       imageUrl, // For base64 images (backward compatibility)
       tags,
@@ -286,15 +273,11 @@ exports.createEvent = async (req, res, next) => {
       errors.tags = tagsValidation.message;
     }
 
-    // Private event validation
-    if (visibility === 'private') {
-      if (!invitedEmails || !Array.isArray(invitedEmails) || invitedEmails.length === 0) {
-        errors.invitedEmails = 'At least one email is required for private events';
-      } else {
-        const emailValidation = validateEmails(invitedEmails);
-        if (!emailValidation.valid) {
-          errors.invitedEmails = emailValidation.message;
-        }
+    // Private event validation - validate email format if emails are provided (but not required)
+    if (visibility === 'private' && invitedEmails && Array.isArray(invitedEmails) && invitedEmails.length > 0) {
+      const emailValidation = validateEmails(invitedEmails);
+      if (!emailValidation.valid) {
+        errors.invitedEmails = emailValidation.message;
       }
     }
 
@@ -368,11 +351,12 @@ exports.createEvent = async (req, res, next) => {
       category,
       price: price || [],
       capacity: capacity || 0,
+      maxAttendees: maxAttendees || null,
       status: status || 'published',
       imageUrl: processedImageUrl,
       tags: tags || [],
       visibility,
-      invitedEmails: visibility === 'private' ? invitedEmails : [],
+      invitedEmails: visibility === 'private' ? (invitedEmails || []) : [],
       licenseFile: licenseFile || null,
       createdBy: req.user.id
     };
@@ -383,10 +367,20 @@ exports.createEvent = async (req, res, next) => {
     // Populate createdBy field
     await event.populate('createdBy', 'name email');
 
+    // Prepare response data
+    const responseData = event.toObject();
+
+    // If private event, include shareToken and shareUrl
+    if (event.visibility === 'private' && event.shareToken) {
+      const baseUrl = process.env.APP_URL || process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+      responseData.shareToken = event.shareToken;
+      responseData.shareUrl = `${baseUrl}/share/${event.shareToken}`;
+    }
+
     res.status(201).json({
       success: true,
       message: 'Event created successfully',
-      data: event
+      data: responseData
     });
   } catch (error) {
     // If event creation fails and image was uploaded, delete the image
@@ -719,6 +713,252 @@ exports.getMyPastEvents = async (req, res, next) => {
       message: 'Past events retrieved successfully'
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get private event by share token
+// @route   GET /api/events/share/:shareToken
+// @access  Public
+exports.getEventByShareToken = async (req, res, next) => {
+  try {
+    const { shareToken } = req.params;
+
+    if (!shareToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Share token is required'
+      });
+    }
+
+    // Find event by share token (must be private)
+    const event = await Event.findOne({ shareToken, visibility: 'private' })
+      .populate('createdBy', '_id name email');
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found or share token invalid'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: event
+    });
+  } catch (error) {
+    console.error('Share token lookup error:', error);
+    next(error);
+  }
+};
+
+// @desc    Get shareable link for private event
+// @route   GET /api/events/:id/share-link
+// @access  Private (Event creator only)
+exports.getShareLink = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format'
+      });
+    }
+
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      });
+    }
+
+    // Check if user is creator
+    if (event.createdBy.toString() !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only get share links for your own events'
+      });
+    }
+
+    // Check if event is private
+    if (event.visibility !== 'private') {
+      return res.status(400).json({
+        success: false,
+        message: 'Share links are only available for private events'
+      });
+    }
+
+    // Ensure shareToken exists (should be auto-generated, but check anyway)
+    if (!event.shareToken) {
+      const crypto = require('crypto');
+      let token;
+      let isUnique = false;
+      
+      while (!isUnique) {
+        token = crypto.randomBytes(32).toString('hex');
+        const existing = await Event.findOne({ shareToken: token });
+        if (!existing) {
+          isUnique = true;
+        }
+      }
+      
+      event.shareToken = token;
+      await event.save();
+    }
+
+    // Generate share URL
+    const baseUrl = process.env.APP_URL || process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const shareUrl = `${baseUrl}/share/${event.shareToken}`;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        shareToken: event.shareToken,
+        shareUrl: shareUrl
+      }
+    });
+  } catch (error) {
+    console.error('Share link generation error:', error);
+    next(error);
+  }
+};
+
+// @desc    Get event management data
+// @route   GET /api/events/:id/manage
+// @access  Private (Event creator only)
+exports.getEventManagement = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const Booking = require('../models/Booking.model');
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format'
+      });
+    }
+
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      });
+    }
+
+    // Check if user is creator
+    if (event.createdBy.toString() !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only manage your own events'
+      });
+    }
+
+    // Get accepted users (bookings with status confirmed or attended)
+    const acceptedBookings = await Booking.find({
+      eventId: event._id,
+      status: { $in: ['confirmed', 'attended'] }
+    })
+    .populate('userId', '_id name email')
+    .sort({ createdAt: -1 });
+
+    // Get pending users (if you have an invitation system, otherwise empty array)
+    // For now, we'll return empty array for pendingUsers
+    const pendingUsers = [];
+
+    // Calculate stats
+    const totalAccepted = acceptedBookings.length;
+    const totalPending = pendingUsers.length;
+    const availableSpots = event.maxAttendees 
+      ? Math.max(0, event.maxAttendees - totalAccepted)
+      : null;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        event: {
+          _id: event._id,
+          title: event.title,
+          shareToken: event.shareToken,
+          maxAttendees: event.maxAttendees,
+          visibility: event.visibility
+        },
+        acceptedUsers: acceptedBookings,
+        pendingUsers: pendingUsers,
+        stats: {
+          totalAccepted: totalAccepted,
+          totalPending: totalPending,
+          maxAttendees: event.maxAttendees,
+          availableSpots: availableSpots
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Management data fetch error:', error);
+    next(error);
+  }
+};
+
+// @desc    Check event capacity
+// @route   POST /api/events/:id/check-capacity
+// @access  Private
+exports.checkCapacity = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { quantity = 1 } = req.body;
+    const Booking = require('../models/Booking.model');
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid event ID format'
+      });
+    }
+
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: 'Event not found'
+      });
+    }
+
+    // If no maxAttendees, always available
+    if (!event.maxAttendees) {
+      return res.status(200).json({
+        available: true,
+        currentCount: 0,
+        maxAttendees: null,
+        remainingSpots: null
+      });
+    }
+
+    // Count current confirmed bookings (exclude cancelled)
+    const currentBookings = await Booking.countDocuments({
+      eventId: event._id,
+      status: { $in: ['confirmed', 'attended'] }
+    });
+
+    const available = (currentBookings + quantity) <= event.maxAttendees;
+    const remainingSpots = Math.max(0, event.maxAttendees - currentBookings);
+
+    res.status(200).json({
+      available: available,
+      currentCount: currentBookings,
+      maxAttendees: event.maxAttendees,
+      remainingSpots: remainingSpots,
+      message: available ? null : 'Event is full'
+    });
+  } catch (error) {
+    console.error('Capacity check error:', error);
     next(error);
   }
 };

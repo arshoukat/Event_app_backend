@@ -1,7 +1,21 @@
 const crypto = require('crypto');
 
 // Encryption key from environment variable (32 bytes for AES-256)
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+// WARNING: If ENCRYPTION_KEY is not set, a random key is generated which will be different on each server restart
+// This means encrypted data cannot be decrypted after restart. Always set ENCRYPTION_KEY in production!
+let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY) {
+  console.warn('⚠️  WARNING: ENCRYPTION_KEY not set in environment variables!');
+  console.warn('⚠️  A random key will be generated, but encrypted data will not be decryptable after server restart.');
+  console.warn('⚠️  Set ENCRYPTION_KEY in your .env file (64 hex characters = 32 bytes).');
+  ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+}
+
+// Validate that ENCRYPTION_KEY is a valid hex string of at least 64 characters
+if (!/^[0-9a-fA-F]{64,}$/.test(ENCRYPTION_KEY)) {
+  console.warn('⚠️  WARNING: ENCRYPTION_KEY should be at least 64 hex characters (32 bytes).');
+}
+
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16; // For GCM, this is 96 bits (12 bytes) but we'll use 16 for compatibility
 const SALT_LENGTH = 64;
